@@ -15,6 +15,7 @@
 // pathpause : pauses queue and active movement; minearea returns to current anchor and waits
 // pathcontinue : resumes queue advancement after pathpause
 // pathstop : stops path mode and clears remaining queued records
+// pathclear : clears the path timer CustomData and resets path recording counters
 // dock : starts auto-dock sequence (requires fresh carrier connector broadcast and proximity to dock pose)
 // undock : disconnects and flies to shared dock pose while staying aligned
 // docksync <on|off> : toggle merge/connector sync behavior for dock/undock
@@ -123,6 +124,7 @@ int pathRecordCounter = 0;
 int pathRecordMineCounter = 0;
 Vector3D pathRecordMineEntry = Vector3D.Zero;
 Vector3D pathRecordMineCornerA = Vector3D.Zero;
+Vector3D pathRecordMineCornerB = Vector3D.Zero;
 Vector3D pathRecordMineUp = Vector3D.Zero;
 Vector3D pathRecordMineForward = Vector3D.Zero;
 enum PathRecordMineStage
@@ -612,6 +614,16 @@ void RemoteCommand (string command)
             pathIndex = 0;
             Echo("Path mode stopped.");
             break;
+        case "pathclear":
+        {
+            IMyTimerBlock pathTimer = FindPathTimer();
+            if (pathTimer != null)
+                pathTimer.CustomData = "";
+            pathRecordCounter = 0;
+            pathRecordMineCounter = 0;
+            Echo("Path timer cleared.");
+            break;
+        }
         case "dock":
             StartDock();
             break;
@@ -718,6 +730,17 @@ bool UpdatePathRecordState()
             SetCockpitGyroControl(true);
             SetMineIndicatorSensor(false);
             Echo("Returned to mine entry. Path recording resumed.");
+            // Auto-start area mining for the area just recorded
+            if ((pathRecordMineCornerB - pathRecordMineCornerA).LengthSquared() > 0.01)
+            {
+                string mineCmd = "minearea;" + BuildMineAreaRecord(
+                    pathRecordMineCornerA, pathRecordMineCornerB,
+                    pathRecordMineUp, pathRecordMineForward,
+                    pathRecordMineDepth, pathRecordMineCounter);
+                StartAreaMining(mineCmd);
+                if (miningEnabled)
+                    Echo("Auto-started minearea for recorded area.");
+            }
         }
         return false;
     }
@@ -792,6 +815,7 @@ void HandlePathRecordMineStep()
     }
 
     Vector3D cornerB = rc.GetPosition();
+    pathRecordMineCornerB = cornerB;
     pathRecordMineCounter++;
     string rec = BuildMineAreaRecord(pathRecordMineCornerA, cornerB, pathRecordMineUp, pathRecordMineForward, pathRecordMineDepth, pathRecordMineCounter);
     if (!AppendPathRecordLine(rec))
