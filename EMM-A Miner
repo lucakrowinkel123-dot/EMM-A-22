@@ -1714,10 +1714,11 @@ List<Vector3D> BuildRectangleLaneAnchors(Vector3D leftUpper, Vector3D rightBotto
     int rows = Math.Max(1, (int)Math.Ceiling(height / laneHeight));
     int cols = Math.Max(1, (int)Math.Ceiling(width / laneWidth));
 
-    // First/last lane centers are inset by half lane size from each border.
-    // Steps are compressed (overlap) to absorb odd remainders while keeping edges covered.
-    double rowStep = rows > 1 ? (height - laneHeight) / (rows - 1) : 0;
-    double colStep = cols > 1 ? (width - laneWidth) / (cols - 1) : 0;
+    // First lane center is inset by half lane size from each border.
+    // Step equals the full lane footprint — no artificial compression.
+    // The last lane center may sit slightly past the far edge but still covers it.
+    double rowStep = rows > 1 ? laneHeight : 0;
+    double colStep = cols > 1 ? laneWidth : 0;
     double rowStart = rows > 1 ? laneHeight * 0.5 : height * 0.5;
     double colStart = cols > 1 ? laneWidth * 0.5 : width * 0.5;
 
