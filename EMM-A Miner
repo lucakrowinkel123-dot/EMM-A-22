@@ -652,15 +652,16 @@ void RemoteCommand (string command)
             skipMineMode = true;
             if (miningEnabled)
             {
-                miningEnabled = false;
-                miningState = MiningState.Idle;
+                // Trigger a backout so the miner exits the hole safely.
+                // After reaching the lane anchor, miningEnabled becomes false
+                // and the path runner continues with skipMineMode active.
+                SetDrills(false);
+                retryCurrentLane = false;
                 areaMiningMode = false;
                 areaLaneAnchors.Clear();
                 areaLaneIndex = 0;
-                retryCurrentLane = false;
-                activeMaxSpeed = 0;
-                SetDrills(false);
-                Echo($"SkipMine: active (return to record {skipMineReturnIndex + 1}). Current mining cancelled.");
+                miningState = MiningState.Backout;
+                Echo($"SkipMine: active (resume record {skipMineReturnIndex + 1}). Backing out of current lane.");
             }
             else
             {
