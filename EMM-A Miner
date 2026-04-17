@@ -1445,7 +1445,7 @@ void UpdateOreTransfer()
     while (oreTransferSourceIdx < _oreTransferSources.Count)
     {
         IMyInventory srcInv = _oreTransferSources[oreTransferSourceIdx].GetInventory(0);
-        if (srcInv != null && !srcInv.Empty()) break;
+        if (srcInv != null && srcInv.CurrentVolume > 0) break;
         oreTransferSourceIdx++;
     }
 
