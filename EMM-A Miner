@@ -49,8 +49,10 @@ string carrierConnectorName = "EMM-A Ca Connector";
 string carrierRemoteName = "EMM-A Ca Remote Control";
 string minerConnectorName = "EMM-A Mi Connector";
 string minerRemoteName = "EMM-A Mi Remote Control";
-string carrierMergerName = "EMM-A Ca Merger";
-string minerMergerName = "EMM-A Mi Merger";
+string carrierMergerName   = "EMM-A Ca Merger";
+string minerMergerName     = "EMM-A Mi Merger";
+string minerContainerTag   = "EMM-A Mi ";
+string carrierContainerTag = "EMM-A Ca ";
 bool dockUseMergerAssist = true;
 bool dockSyncMode = true;
 string dockBroadcastTag = "EMM_A_DOCK_POSE";
@@ -1361,7 +1363,7 @@ void UpdateDockingState()
         if (dockingComplete)
         {
             ApplyDockedPowerState();
-            CompleteDocking("Dock complete (connected).");
+            CompleteDocking("Dock complete (connected).", true);
         }
     }
 }
@@ -1395,7 +1397,7 @@ void ApplyUndockedPowerState()
     foreach (var h in hydrogenTanks) if (HasMinerTag(h)) h.Stockpile = false;
 }
 
-void CompleteDocking(string message)
+void CompleteDocking(string message, bool transferOre = false)
 {
     dockingState = DockingState.None;
     undockRecompileTicksRemaining = 0;
@@ -1408,6 +1410,41 @@ void CompleteDocking(string message)
     activeMaxSpeed = 0;
     ResetMovement();
     Echo(message);
+    if (transferOre)
+        TransferOreToCarrier();
+}
+
+void TransferOreToCarrier()
+{
+    var sources = new List<IMyTerminalBlock>();
+    var targets = new List<IMyTerminalBlock>();
+    GridTerminalSystem.GetBlocksOfType(sources, b =>
+        b.HasInventory &&
+        b.CustomName.IndexOf(minerContainerTag, StringComparison.OrdinalIgnoreCase) >= 0);
+    GridTerminalSystem.GetBlocksOfType(targets, b =>
+        b.HasInventory &&
+        b.CustomName.IndexOf(carrierContainerTag, StringComparison.OrdinalIgnoreCase) >= 0);
+
+    if (targets.Count == 0) { Echo("TransferOre: no carrier containers found."); return; }
+
+    foreach (var src in sources)
+    {
+        IMyInventory srcInv = src.GetInventory(0);
+        if (srcInv == null || srcInv.Empty()) continue;
+        var items = new List<MyInventoryItem>();
+        srcInv.GetItems(items);
+        foreach (var item in items)
+        {
+            foreach (var tgt in targets)
+            {
+                IMyInventory tgtInv = tgt.GetInventory(0);
+                if (tgtInv == null) continue;
+                if (srcInv.TransferItemTo(tgtInv, item))
+                    break;
+            }
+        }
+    }
+    Echo("Ore transferred to carrier containers.");
 }
 
 void StartPathFromTimer()
