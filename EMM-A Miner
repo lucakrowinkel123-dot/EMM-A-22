@@ -117,6 +117,11 @@ bool pathPaused = false;
 bool pathPausedNavResume = false;
 List<string> pathRecords = new List<string>();
 int pathIndex = 0;
+bool skipMineMode = false;
+bool skipMineWaitUndock = false;
+bool skipMineReplayMode = false;
+int skipMineReturnIndex = 0;
+double skipMineHydrogenThreshold = 0.95;
 bool pathRecordingEnabled = false;
 bool pathRecordingPaused = false;
 bool pathRecordingWaitReturn = false;
@@ -261,6 +266,7 @@ public void Main (string argument, UpdateType updateSource)
         else if (!usedSoftLock)
             ResetMovement();
 
+        UpdateSkipMineState();
         UpdatePathRunner();
         if (oreTransferActive)
             UpdateOreTransfer();
@@ -300,6 +306,12 @@ void WriteEcho()
         sb.AppendLine($"Area lane: {areaLaneIndex + 1}/{areaLaneAnchors.Count}");
     if (pathMode)
         sb.AppendLine($"Path: {Math.Min(pathIndex + 1, pathRecords.Count)}/{pathRecords.Count}" + (pathPaused ? " (paused)" : ""));
+    if (skipMineMode)
+        sb.AppendLine($"SkipMine: ACTIVE (resume at record {skipMineReturnIndex + 1})");
+    if (skipMineWaitUndock)
+        sb.AppendLine($"SkipMine: WAITING (cargo empty={(GetOreAmount(true) < 1.0)}, H2 full={IsHydrogenFull()})");
+    if (skipMineReplayMode)
+        sb.AppendLine($"SkipMine: REPLAY (skipping minearea before record {skipMineReturnIndex + 1})");
     sb.AppendLine($"Docking: {dockingState}");
     sb.AppendLine($"Dock sync mode: {(dockSyncMode ? "ON" : "OFF")}");
     sb.AppendLine($"Dock connector: {(minerConnector != null ? minerConnector.CustomName : "<missing>")}");
@@ -538,6 +550,10 @@ void RemoteCommand (string command)
             pathPausedNavResume = false;
             pathRecords.Clear();
             pathIndex = 0;
+            skipMineMode = false;
+            skipMineWaitUndock = false;
+            skipMineReplayMode = false;
+            skipMineReturnIndex = 0;
             pathRecordingEnabled = false;
             pathRecordingPaused = false;
             pathRecordingWaitReturn = false;
@@ -621,12 +637,58 @@ void RemoteCommand (string command)
                     StartNextPathRecord();
             }
             break;
+        case "pathskipmine":
+            if (!pathMode)
+            {
+                Echo("pathskipmine: path mode is not active.");
+                break;
+            }
+            if (skipMineMode || skipMineWaitUndock || skipMineReplayMode)
+            {
+                Echo("pathskipmine: skip mine operation already active.");
+                break;
+            }
+            skipMineReturnIndex = miningEnabled ? pathIndex - 1 : pathIndex;
+            skipMineMode = true;
+            if (miningEnabled)
+            {
+                miningEnabled = false;
+                miningState = MiningState.Idle;
+                areaMiningMode = false;
+                areaLaneAnchors.Clear();
+                areaLaneIndex = 0;
+                retryCurrentLane = false;
+                activeMaxSpeed = 0;
+                SetDrills(false);
+                Echo($"SkipMine: active (return to record {skipMineReturnIndex + 1}). Current mining cancelled.");
+            }
+            else
+            {
+                Echo($"SkipMine: active. Will resume mining at record {skipMineReturnIndex + 1} on replay.");
+            }
+            break;
+        case "pathskipminestop":
+            if (!skipMineMode && !skipMineWaitUndock && !skipMineReplayMode)
+            {
+                Echo("pathskipminestop: no skip mine operation is active.");
+                break;
+            }
+            skipMineMode = false;
+            skipMineWaitUndock = false;
+            skipMineReplayMode = false;
+            skipMineReturnIndex = 0;
+            Echo("SkipMine operation cancelled.");
+            break;
         case "pathstop":
             pathMode = false;
             pathPaused = false;
             pathPausedNavResume = false;
             pathRecords.Clear();
             pathIndex = 0;
+            skipMineMode = false;
+            skipMineWaitUndock = false;
+            skipMineReplayMode = false;
+            skipMineReturnIndex = 0;
             Echo("Path mode stopped.");
             break;
         case "pathclear":
@@ -982,6 +1044,66 @@ void UpdatePathRunner()
     StartNextPathRecord();
 }
 
+void UpdateSkipMineState()
+{
+    // Phase 1: forward pass done — path finished and we are physically docked.
+    if (skipMineMode && !pathMode && !skipMineWaitUndock && !skipMineReplayMode)
+    {
+        if (dockingState == DockingState.None && IsPhysicallyDocked())
+        {
+            skipMineMode = false;
+            skipMineWaitUndock = true;
+            Echo("SkipMine: docked. Waiting for empty cargo and full H2.");
+        }
+        return;
+    }
+
+    // Phase 2: wait for cargo empty + H2 full, then auto-undock.
+    if (skipMineWaitUndock)
+    {
+        if (oreTransferActive) return;
+        if (dockingState != DockingState.None) return;
+        bool cargoEmpty = GetOreAmount(true) < 1.0;
+        bool h2Full = IsHydrogenFull();
+        if (cargoEmpty && h2Full)
+        {
+            skipMineWaitUndock = false;
+            skipMineReplayMode = true;
+            Echo("SkipMine: cargo empty and H2 full. Undocking for replay.");
+            StartUndock();
+        }
+        return;
+    }
+
+    // Phase 3: undock complete — restart path for replay.
+    if (skipMineReplayMode && !pathMode)
+    {
+        if (dockingState != DockingState.None) return;
+        if (IsPhysicallyDocked()) return;
+        skipMineReplayMode = false;
+        StartSkipMineReplayPath();
+    }
+}
+
+void StartSkipMineReplayPath()
+{
+    List<string> loaded;
+    string timerName;
+    if (!TryLoadPathRecordsFromTimer(out loaded, out timerName))
+    {
+        Echo("SkipMine replay: unable to reload path records from timer.");
+        return;
+    }
+    pathRecords = loaded;
+    pathIndex = 0;
+    pathMode = true;
+    pathPaused = false;
+    pathPausedNavResume = false;
+    skipMineReplayMode = true; // re-set: cleared above, needed by StartNextPathRecord
+    Echo($"SkipMine: replaying path from start. Resuming mining at record {skipMineReturnIndex + 1}.");
+    StartNextPathRecord();
+}
+
 void UpdateDockPoseFromBroadcast()
 {
     if (dockListener == null)
@@ -1121,6 +1243,43 @@ bool IsConnectorCloseEnoughToConnect()
 bool IsMergerDocked()
 {
     return minerMerger != null && minerMerger.IsConnected;
+}
+
+bool IsPhysicallyDocked()
+{
+    if (minerConnector != null && minerConnector.Status == MyShipConnectorStatus.Connected)
+        return true;
+    return IsMergerDocked();
+}
+
+bool IsHydrogenFull()
+{
+    bool anyFound = false;
+    foreach (var tank in hydrogenTanks)
+    {
+        if (tank == null || !tank.IsFunctional) continue;
+        if (!HasMinerTag(tank)) continue;
+        anyFound = true;
+        if (tank.FilledRatio < skipMineHydrogenThreshold)
+            return false;
+    }
+    return anyFound;
+}
+
+bool IsMineareaRecord(string record)
+{
+    if (string.IsNullOrWhiteSpace(record))
+        return false;
+    string r = record.Trim();
+    if (r.StartsWith("\"") && r.EndsWith("\"") && r.Length >= 2)
+        r = r.Substring(1, r.Length - 2).Trim();
+    if (string.IsNullOrWhiteSpace(r))
+        return false;
+    if (r.StartsWith("minearea;", StringComparison.OrdinalIgnoreCase))
+        return true;
+    if (r.StartsWith("GPS:", StringComparison.OrdinalIgnoreCase) && r.Contains(";"))
+        return true;
+    return false;
 }
 
 void SetMergerEnabled(bool enabled)
@@ -1504,8 +1663,31 @@ void StartNextPathRecord()
 {
     while (pathMode && pathIndex < pathRecords.Count)
     {
+        int currentIndex = pathIndex;
         string record = pathRecords[pathIndex];
         pathIndex++;
+
+        // Forward pass: skip all minearea records
+        if (skipMineMode && IsMineareaRecord(record))
+        {
+            Echo($"SkipMine: skipping minearea record #{currentIndex + 1}.");
+            continue;
+        }
+
+        // Replay pass: once we reach the return index, clear replay mode so this and all
+        // subsequent records (including the interrupted minearea) execute normally.
+        if (skipMineReplayMode && currentIndex >= skipMineReturnIndex)
+        {
+            skipMineReplayMode = false;
+            Echo($"SkipMine: resuming normal execution at record #{currentIndex + 1}.");
+        }
+        // Replay pass: skip minearea records that are before the return index.
+        else if (skipMineReplayMode && IsMineareaRecord(record))
+        {
+            Echo($"SkipMine replay: skipping minearea #{currentIndex + 1} (before resume record {skipMineReturnIndex + 1}).");
+            continue;
+        }
+
         if (ExecutePathRecord(record))
             return;
         Echo($"Skipping invalid path record #{pathIndex}.");
@@ -2207,6 +2389,11 @@ void SaveState()
     sb.AppendLine("dockConnectRecompileTicksRemaining=" + dockConnectRecompileTicksRemaining);
     sb.AppendLine("dockConnectRecompileArmed=" + (dockConnectRecompileArmed ? "1" : "0"));
     sb.AppendLine("connectorOffsetLocal=" + V3ToString(connectorOffsetLocal));
+    sb.AppendLine("skipMineMode=" + (skipMineMode ? "1" : "0"));
+    sb.AppendLine("skipMineWaitUndock=" + (skipMineWaitUndock ? "1" : "0"));
+    sb.AppendLine("skipMineReplayMode=" + (skipMineReplayMode ? "1" : "0"));
+    sb.AppendLine("skipMineReturnIndex=" + skipMineReturnIndex);
+    sb.AppendLine("skipMineHydrogenThreshold=" + skipMineHydrogenThreshold.ToString("R"));
     Storage = sb.ToString();
 }
 
@@ -2297,6 +2484,11 @@ void LoadState()
     if (dict.TryGetValue("dockConnectRecompileTicksRemaining", out s) && int.TryParse(s, out n)) dockConnectRecompileTicksRemaining = n;
     if (dict.TryGetValue("dockConnectRecompileArmed", out s)) dockConnectRecompileArmed = s == "1";
     if (dict.TryGetValue("connectorOffsetLocal", out s) && TryParseV3(s, out v)) connectorOffsetLocal = v;
+    if (dict.TryGetValue("skipMineMode", out s)) skipMineMode = s == "1";
+    if (dict.TryGetValue("skipMineWaitUndock", out s)) skipMineWaitUndock = s == "1";
+    if (dict.TryGetValue("skipMineReplayMode", out s)) skipMineReplayMode = s == "1";
+    if (dict.TryGetValue("skipMineReturnIndex", out s) && int.TryParse(s, out n)) skipMineReturnIndex = n;
+    if (dict.TryGetValue("skipMineHydrogenThreshold", out s) && double.TryParse(s, out d)) skipMineHydrogenThreshold = d;
 
     // If drills were actively running when the reload happened, turn them back on
     // and reset the stuck monitor so the stuck timer starts fresh.
