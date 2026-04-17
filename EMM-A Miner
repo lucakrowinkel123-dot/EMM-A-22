@@ -181,6 +181,11 @@ const int dockConnectRecompileTicks = 30;
 readonly int echoFrequency = 100; // every 100th game tick
 int runtime = 0;
 
+bool oreTransferActive = false;
+int oreTransferSourceIdx = 0;
+List<IMyTerminalBlock> _oreTransferSources = new List<IMyTerminalBlock>();
+List<IMyTerminalBlock> _oreTransferTargets = new List<IMyTerminalBlock>();
+
 // Cached block/item lists reused by GetOreAmount to avoid per-call GTS scans and allocations
 List<IMyTerminalBlock> _invBlocks = new List<IMyTerminalBlock>();
 List<MyInventoryItem> _invItems = new List<MyInventoryItem>();
@@ -257,6 +262,8 @@ public void Main (string argument, UpdateType updateSource)
             ResetMovement();
 
         UpdatePathRunner();
+        if (oreTransferActive)
+            UpdateOreTransfer();
         runtime++;
     }
     else
@@ -1411,40 +1418,67 @@ void CompleteDocking(string message, bool transferOre = false)
     ResetMovement();
     Echo(message);
     if (transferOre)
-        TransferOreToCarrier();
+        StartOreTransfer();
 }
 
-void TransferOreToCarrier()
+void StartOreTransfer()
 {
-    var sources = new List<IMyTerminalBlock>();
-    var targets = new List<IMyTerminalBlock>();
-    GridTerminalSystem.GetBlocksOfType(sources, b =>
+    _oreTransferSources.Clear();
+    _oreTransferTargets.Clear();
+    GridTerminalSystem.GetBlocksOfType(_oreTransferSources, b =>
         b.HasInventory &&
         b.CustomName.IndexOf(minerContainerTag, StringComparison.OrdinalIgnoreCase) >= 0);
-    GridTerminalSystem.GetBlocksOfType(targets, b =>
+    GridTerminalSystem.GetBlocksOfType(_oreTransferTargets, b =>
         b.HasInventory &&
         b.CustomName.IndexOf(carrierContainerTag, StringComparison.OrdinalIgnoreCase) >= 0);
 
-    if (targets.Count == 0) { Echo("TransferOre: no carrier containers found."); return; }
+    if (_oreTransferTargets.Count == 0) { Echo("TransferOre: no carrier containers found."); return; }
 
-    foreach (var src in sources)
+    oreTransferSourceIdx = 0;
+    oreTransferActive = true;
+    Echo("Ore transfer started.");
+}
+
+void UpdateOreTransfer()
+{
+    // Advance past empty sources
+    while (oreTransferSourceIdx < _oreTransferSources.Count)
     {
-        IMyInventory srcInv = src.GetInventory(0);
-        if (srcInv == null || srcInv.Empty()) continue;
-        var items = new List<MyInventoryItem>();
-        srcInv.GetItems(items);
-        foreach (var item in items)
+        IMyInventory srcInv = _oreTransferSources[oreTransferSourceIdx].GetInventory(0);
+        if (srcInv != null && !srcInv.Empty()) break;
+        oreTransferSourceIdx++;
+    }
+
+    if (oreTransferSourceIdx >= _oreTransferSources.Count)
+    {
+        oreTransferActive = false;
+        Echo("Ore transfer complete.");
+        return;
+    }
+
+    // Transfer one item stack this tick
+    IMyInventory src = _oreTransferSources[oreTransferSourceIdx].GetInventory(0);
+    var items = new List<MyInventoryItem>();
+    src.GetItems(items);
+    if (items.Count == 0) { oreTransferSourceIdx++; return; }
+
+    bool transferred = false;
+    foreach (var tgt in _oreTransferTargets)
+    {
+        IMyInventory tgtInv = tgt.GetInventory(0);
+        if (tgtInv == null) continue;
+        if (src.TransferItemTo(tgtInv, items[0]))
         {
-            foreach (var tgt in targets)
-            {
-                IMyInventory tgtInv = tgt.GetInventory(0);
-                if (tgtInv == null) continue;
-                if (srcInv.TransferItemTo(tgtInv, item))
-                    break;
-            }
+            transferred = true;
+            break;
         }
     }
-    Echo("Ore transferred to carrier containers.");
+
+    if (!transferred)
+    {
+        oreTransferActive = false;
+        Echo("TransferOre: carrier containers full.");
+    }
 }
 
 void StartPathFromTimer()
