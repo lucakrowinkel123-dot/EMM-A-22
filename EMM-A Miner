@@ -1441,33 +1441,32 @@ void StartOreTransfer()
 
 void UpdateOreTransfer()
 {
-    // Advance past empty sources
+    // Advance past empty sources, caching the inventory reference we'll reuse below
+    IMyInventory src = null;
     while (oreTransferSourceIdx < _oreTransferSources.Count)
     {
-        IMyInventory srcInv = _oreTransferSources[oreTransferSourceIdx].GetInventory(0);
-        if (srcInv != null && srcInv.CurrentVolume > 0) break;
+        src = _oreTransferSources[oreTransferSourceIdx].GetInventory(0);
+        if (src != null && src.CurrentVolume > 0) break;
+        src = null;
         oreTransferSourceIdx++;
     }
 
-    if (oreTransferSourceIdx >= _oreTransferSources.Count)
+    if (src == null)
     {
         oreTransferActive = false;
         Echo("Ore transfer complete.");
         return;
     }
-
-    // Transfer one item stack this tick
-    IMyInventory src = _oreTransferSources[oreTransferSourceIdx].GetInventory(0);
-    var items = new List<MyInventoryItem>();
-    src.GetItems(items);
-    if (items.Count == 0) { oreTransferSourceIdx++; return; }
+    _invItems.Clear();
+    src.GetItems(_invItems);
+    if (_invItems.Count == 0) { oreTransferSourceIdx++; return; }
 
     bool transferred = false;
     foreach (var tgt in _oreTransferTargets)
     {
         IMyInventory tgtInv = tgt.GetInventory(0);
         if (tgtInv == null) continue;
-        if (src.TransferItemTo(tgtInv, items[0]))
+        if (src.TransferItemTo(tgtInv, _invItems[0]))
         {
             transferred = true;
             break;
