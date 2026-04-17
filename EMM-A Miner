@@ -29,8 +29,8 @@
 // =====================================
 
 // ========== Editable Script Settings ==========
-string cockpitName = "Cockpit";
-double maxSpeed = 25;
+string cockpitName = "EMM-A Mi Cockpit";
+double maxSpeed = 20;
 double arrivalTolerance = 2.5;
 double miningArrivalTolerance = 0.25;
 double orientationToleranceDeg = 1.0;
@@ -2696,7 +2696,7 @@ public class VectorPID
 
 const double thrustP = 3;
 const double thrustI = 2;
-const double thrustD = 2;
+const double thrustD = 5;
 const double thrustDecay = 0.2;
 const float minThrust = 1.0000001f;
 
