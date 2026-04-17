@@ -1709,18 +1709,15 @@ List<Vector3D> BuildRectangleLaneAnchors(Vector3D leftUpper, Vector3D rightBotto
     double height = Math.Abs(Vector3D.Dot(delta, down));
     double width = Math.Abs(Vector3D.Dot(delta, right));
 
-    // Use center points for each lane so the lane footprint stays inside bounds.
-    // Choose lane counts with Ceil() so we never leave uncovered gaps.
     int rows = Math.Max(1, (int)Math.Ceiling(height / laneHeight));
     int cols = Math.Max(1, (int)Math.Ceiling(width / laneWidth));
 
-    // First lane center is inset by half lane size from each border.
-    // Step equals the full lane footprint — no artificial compression.
-    // The last lane center may sit slightly past the far edge but still covers it.
-    double rowStep = rows > 1 ? laneHeight : 0;
-    double colStep = cols > 1 ? laneWidth : 0;
+    // First anchor inset by half lane, last anchor inset from far edge by half lane.
+    // Step distributes remaining span evenly — all anchors stay within bounds.
     double rowStart = rows > 1 ? laneHeight * 0.5 : height * 0.5;
+    double rowStep  = rows > 1 ? (height - laneHeight) / (rows - 1) : 0;
     double colStart = cols > 1 ? laneWidth * 0.5 : width * 0.5;
+    double colStep  = cols > 1 ? (width - laneWidth) / (cols - 1) : 0;
 
     for (int r = 0; r < rows; r++)
     {
