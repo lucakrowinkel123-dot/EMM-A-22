@@ -49,8 +49,10 @@ string carrierConnectorName = "EMM-A Ca Connector";
 string carrierRemoteName = "EMM-A Ca Remote Control";
 string minerConnectorName = "EMM-A Mi Connector";
 string minerRemoteName = "EMM-A Mi Remote Control";
-string carrierMergerName = "EMM-A Ca Merger";
-string minerMergerName = "EMM-A Mi Merger";
+string carrierMergerName   = "EMM-A Ca Merger";
+string minerMergerName     = "EMM-A Mi Merger";
+string minerContainerTag   = "EMM-A Mi ";
+string carrierContainerTag = "EMM-A Ca ";
 bool dockUseMergerAssist = true;
 bool dockSyncMode = true;
 string dockBroadcastTag = "EMM_A_DOCK_POSE";
@@ -179,6 +181,11 @@ const int dockConnectRecompileTicks = 30;
 readonly int echoFrequency = 100; // every 100th game tick
 int runtime = 0;
 
+bool oreTransferActive = false;
+int oreTransferSourceIdx = 0;
+List<IMyTerminalBlock> _oreTransferSources = new List<IMyTerminalBlock>();
+List<IMyTerminalBlock> _oreTransferTargets = new List<IMyTerminalBlock>();
+
 // Cached block/item lists reused by GetOreAmount to avoid per-call GTS scans and allocations
 List<IMyTerminalBlock> _invBlocks = new List<IMyTerminalBlock>();
 List<MyInventoryItem> _invItems = new List<MyInventoryItem>();
@@ -255,6 +262,8 @@ public void Main (string argument, UpdateType updateSource)
             ResetMovement();
 
         UpdatePathRunner();
+        if (oreTransferActive)
+            UpdateOreTransfer();
         runtime++;
     }
     else
@@ -1361,7 +1370,7 @@ void UpdateDockingState()
         if (dockingComplete)
         {
             ApplyDockedPowerState();
-            CompleteDocking("Dock complete (connected).");
+            CompleteDocking("Dock complete (connected).", true);
         }
     }
 }
@@ -1395,7 +1404,7 @@ void ApplyUndockedPowerState()
     foreach (var h in hydrogenTanks) if (HasMinerTag(h)) h.Stockpile = false;
 }
 
-void CompleteDocking(string message)
+void CompleteDocking(string message, bool transferOre = false)
 {
     dockingState = DockingState.None;
     undockRecompileTicksRemaining = 0;
@@ -1408,6 +1417,68 @@ void CompleteDocking(string message)
     activeMaxSpeed = 0;
     ResetMovement();
     Echo(message);
+    if (transferOre)
+        StartOreTransfer();
+}
+
+void StartOreTransfer()
+{
+    _oreTransferSources.Clear();
+    _oreTransferTargets.Clear();
+    GridTerminalSystem.GetBlocksOfType(_oreTransferSources, b =>
+        b.HasInventory &&
+        b.CustomName.IndexOf(minerContainerTag, StringComparison.OrdinalIgnoreCase) >= 0);
+    GridTerminalSystem.GetBlocksOfType(_oreTransferTargets, b =>
+        b.HasInventory &&
+        b.CustomName.IndexOf(carrierContainerTag, StringComparison.OrdinalIgnoreCase) >= 0);
+
+    if (_oreTransferTargets.Count == 0) { Echo("TransferOre: no carrier containers found."); return; }
+
+    oreTransferSourceIdx = 0;
+    oreTransferActive = true;
+    Echo("Ore transfer started.");
+}
+
+void UpdateOreTransfer()
+{
+    // Advance past empty sources
+    while (oreTransferSourceIdx < _oreTransferSources.Count)
+    {
+        IMyInventory srcInv = _oreTransferSources[oreTransferSourceIdx].GetInventory(0);
+        if (srcInv != null && !srcInv.Empty()) break;
+        oreTransferSourceIdx++;
+    }
+
+    if (oreTransferSourceIdx >= _oreTransferSources.Count)
+    {
+        oreTransferActive = false;
+        Echo("Ore transfer complete.");
+        return;
+    }
+
+    // Transfer one item stack this tick
+    IMyInventory src = _oreTransferSources[oreTransferSourceIdx].GetInventory(0);
+    var items = new List<MyInventoryItem>();
+    src.GetItems(items);
+    if (items.Count == 0) { oreTransferSourceIdx++; return; }
+
+    bool transferred = false;
+    foreach (var tgt in _oreTransferTargets)
+    {
+        IMyInventory tgtInv = tgt.GetInventory(0);
+        if (tgtInv == null) continue;
+        if (src.TransferItemTo(tgtInv, items[0]))
+        {
+            transferred = true;
+            break;
+        }
+    }
+
+    if (!transferred)
+    {
+        oreTransferActive = false;
+        Echo("TransferOre: carrier containers full.");
+    }
 }
 
 void StartPathFromTimer()
