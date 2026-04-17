@@ -37,7 +37,7 @@ double TOFFU = 0;
 double TOFFF = 0;
 
 // ----- SaveAsteroid settings -----
-int    asteroidsPerDb    = 5;                      // how many Asteroid Records per DB timer
+int    asteroidsPerDb    = 10;                     // how many Asteroid Records per DB timer
 string minerPathTimerTag = "EMM-A Mi Path";        // name tag of the miner's Path timer
 string asteroidDbTagPfx  = "EMM-A Ca Asteroid DB "; // prefix for Asteroid DB timer names
 string zoneDbTimerTag    = "EMM-A Ca Zone DB";     // exact name of the Zone DB timer
