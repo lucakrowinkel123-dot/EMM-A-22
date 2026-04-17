@@ -614,19 +614,15 @@ void SimulateRecompile()
 // Scans all Asteroid DB timers to find the highest saved asteroid number, then returns +1.
 int FindNextAsteroidNumber()
 {
+    IMyTimerBlock zoneDb = FindZoneDbTimer();
+    if (zoneDb == null) return 1;
     int maxNum = 0;
-    foreach (var t in GetBlocks<IMyTimerBlock>())
+    foreach (string line in (zoneDb.CustomData ?? "").Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries))
     {
-        if (t == null || string.IsNullOrWhiteSpace(t.CustomName)) continue;
-        if (t.CustomName.IndexOf(asteroidDbTagPfx, StringComparison.OrdinalIgnoreCase) < 0) continue;
-        foreach (string line in (t.CustomData ?? "").Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries))
-        {
-            string trimmed = line.Trim();
-            if (!trimmed.StartsWith("Asteroid ", StringComparison.OrdinalIgnoreCase)) continue;
-            int num;
-            if (int.TryParse(trimmed.Substring(9).Trim(), out num) && num > maxNum)
-                maxNum = num;
-        }
+        string trimmed = line.Trim();
+        int num;
+        if (trimmed.Length == 3 && int.TryParse(trimmed, out num) && num > maxNum)
+            maxNum = num;
     }
     return maxNum + 1;
 }
